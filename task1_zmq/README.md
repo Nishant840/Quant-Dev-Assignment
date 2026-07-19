@@ -1,53 +1,206 @@
-# Task 1: ZeroMQ Distributed Trading System
 
-This directory contains a mock distributed trading system built using ZeroMQ, simulating the communication flow between a Trading Strategy, a Broker Adapter, and an Exchange Broker.
+# Task 1 – ZeroMQ Distributed Trading System
 
-## 🏗️ Architecture
+A simple distributed trading system built using **ZeroMQ** that simulates communication between a trading strategy, a broker adapter, and a mock broker.
 
-The system is decoupled into three independent processes communicating over two distinct ZMQ network topologies:
+The project demonstrates request-response messaging for order placement and publish-subscribe messaging for execution reports and market data.
 
-1. **Order Routing (Synchronous `REQ/REP`)**
-   - **Flow:** Strategy (A) ➡️ Adapter (B) ➡️ Broker (C)
-   - Used for guaranteed, point-to-point order placement and acknowledgment.
-2. **Market Data & Executions (Asynchronous `PUB/SUB`)**
-   - **Flow:** Broker (C) ➡️ Adapter (B) ➡️ Strategy (A)
-   - Used for high-throughput, non-blocking broadcasting of execution fills and order book updates.
+---
 
-```text
-+----------------+          REQ/REP (5557)         +---------------+          REQ/REP (5555)         +---------------+
-|                |  ---------------------------->  |               |  ---------------------------->  |               |
-|  Script A      |                                 |  Script B     |                                 |  Script C     |
-|  (Strategy)    |                                 |  (Adapter)    |                                 |  (Broker)     |
-|                |  <----------------------------  |               |  <----------------------------  |               |
-+----------------+          PUB/SUB (5558)         +---------------+          PUB/SUB (5556)         +---------------+
+# Architecture
+
+```mermaid
+flowchart LR
+
+    A["Strategy<br/>(script_a_strategy.py)"]
+    B["Broker Adapter<br/>(script_b_adapter.py)"]
+    C["Mock Broker<br/>(script_c_broker.py)"]
+
+    A -- "REQ : 5557" --> B
+    B -- "REQ : 5555" --> C
+
+    C -- "PUB : 5556" --> B
+    B -- "PUB : 5558" --> A
 ```
 
-## 🛠️ Key Design Decisions
+---
 
-1. **Strict Data Validation (`Pydantic`)**
-   - All network payloads are serialized/deserialized using Pydantic models (`schemas.py`). This guarantees type safety across the network boundary, ensuring that malformed JSON or missing fields (e.g., missing price) are caught immediately, preventing catastrophic downstream crashes.
-2. **ZMQ Poller (`Script B`)**
-   - The Adapter must simultaneously listen for incoming orders from the Strategy and incoming market data from the Broker. Instead of busy-waiting with a CPU-intensive non-blocking loop, it uses a C-level `zmq.Poller` to multiplex the sockets, achieving near-zero CPU usage while idle.
-3. **Rigorous PnL Accounting (`Script A`)**
-   - The Strategy features a robust `Portfolio` class that accurately calculates **Realised PnL** using Volume Weighted Average Price (VWAP). It correctly handles complex state transitions, such as flipping from a net-long position directly into a net-short position on a single fill, ensuring accounting is accurate down to the penny.
-4. **PUB/SUB Topic Filtering**
-   - Market data is blasted using specific topics (`EXEC` and `OB`). This allows downstream subscribers to filter out high-frequency order book noise at the network layer if they only care about execution reports.
+# Communication Flow
 
-## 🚀 How to Run
+### Order Placement
 
-To run the full demonstration, you will need 3 terminal windows. Start the services in reverse order (Broker first) to establish the network binds cleanly.
+```
+Strategy
+    │
+    ▼
+Broker Adapter
+    │
+    ▼
+Mock Broker
+```
 
-1. **Terminal 1 (Start Broker):**
-   ```bash
-   python script_c_broker.py
-   ```
-2. **Terminal 2 (Start Adapter):**
-   ```bash
-   python script_b_adapter.py
-   ```
-3. **Terminal 3 (Start Strategy):**
-   ```bash
-   python script_a_strategy.py
-   ```
+Orders are placed synchronously using the **REQ/REP** pattern so every order receives an acknowledgement before the next one is sent.
 
-*Watch Terminal 3 to see the Strategy execute 5 automated orders (both Buy and Sell) while maintaining a live dashboard of Open Positions, Realised PnL, and a dynamic Order Book.*
+---
+
+### Execution & Market Updates
+
+```
+Mock Broker
+    │
+    ▼
+Broker Adapter
+    │
+    ▼
+Strategy
+```
+
+Execution reports and order book updates are broadcast asynchronously using the **PUB/SUB** pattern.
+
+---
+
+# Features
+
+- ZeroMQ based inter-process communication
+- Decoupled Strategy, Adapter and Broker
+- Order routing through Broker Adapter
+- Live execution updates
+- Order Book maintenance
+- Open Position tracking
+- Realised PnL calculation
+- Pydantic based message validation
+
+---
+
+
+# Project Structure
+
+```
+task1_zmq/
+├── requirements.txt
+├── schemas.py
+├── script_a_strategy.py
+├── script_b_adapter.py
+├── script_c_broker.py
+├── test_broker.py
+└── README.md
+```
+
+| File | Description |
+|------|-------------|
+| `script_a_strategy.py` | Trading strategy that places orders and maintains portfolio state |
+| `script_b_adapter.py` | Routes orders between the strategy and the broker while forwarding market updates |
+| `script_c_broker.py` | Mock broker that validates and executes incoming orders |
+| `schemas.py` | Shared Pydantic models used for message validation and serialization |
+| `test_broker.py` | Utility script for testing the broker independently with custom requests |
+---
+
+# Design Decisions
+
+### Broker Adapter
+
+The strategy communicates only with the broker adapter rather than the broker directly.
+
+This abstraction allows the trading strategy to remain independent of broker-specific communication and makes it easier to replace or extend the broker implementation.
+
+---
+
+### Message Validation
+
+All network payloads are represented using shared Pydantic models defined in `schemas.py`.
+
+This provides:
+
+- Type safety
+- Input validation
+- Consistent serialization
+- Easier debugging
+
+---
+
+### Concurrent Message Handling
+
+The broker adapter uses a **ZeroMQ Poller** to listen for both incoming orders and broker updates simultaneously without blocking either communication channel.
+
+---
+
+### Background Market Listener
+
+The strategy runs a dedicated background thread that continuously listens for execution reports and market data while the main thread submits orders.
+
+This allows order submission and portfolio updates to happen concurrently.
+
+---
+
+### Portfolio Management
+
+The strategy maintains its own portfolio state and updates the following after every execution:
+
+- Current Position
+- Average Entry Price
+- Realised PnL
+- Latest Order Book
+
+---
+
+# Requirements
+
+- Python 3.11+
+- ZeroMQ
+- Pydantic
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+# Running the Project
+
+Start each service in a separate terminal.
+
+### Terminal 1
+
+```bash
+python script_c_broker.py
+```
+
+### Terminal 2
+
+```bash
+python script_b_adapter.py
+```
+
+### Terminal 3
+
+```bash
+python script_a_strategy.py
+```
+
+The strategy automatically submits five sample BUY and SELL orders.
+
+During execution the dashboard displays:
+
+- Order acknowledgements
+- Open Positions
+- Average Entry Price
+- Realised PnL
+- Live Order Book updates
+
+---
+
+# Assumptions & Simplifications
+- Orders are always 100% filled (no partial fills) to keep the demo focused on message flow.
+- One malformed order is deliberately included to demonstrate broker-side rejection handling.
+- No reconnect/timeout logic on the adapter↔broker leg — acceptable for a local demo, would add zmq.RCVTIMEO in a production setting.
+- Single symbol (AAPL) and single strategy instance for simplicity.
+
+---
+
+# Technologies
+
+- Python
+- ZeroMQ (pyzmq)
+- Pydantic
